@@ -18,7 +18,7 @@
     return e;
   };
 
-  let sb = null, user = null;
+  let sb = null;
   let savedDraws = new Set();
   let items = [];
   let nextId = 1;
@@ -31,43 +31,13 @@
       w.textContent = 'โหลดไลบรารี Supabase ไม่สำเร็จ (ตรวจอินเทอร์เน็ต) — อ่านภาพได้ แต่ยังบันทึกไม่ได้';
       return;
     }
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    sb.auth.getSession().then(({ data }) => setUser(data.session && data.session.user));
-    sb.auth.onAuthStateChange((_e, session) => setUser(session && session.user));
-  }
-
-  function setUser(u) {
-    user = u || null;
-    renderAuth();
-    if (user) { loadSavedSet().then(refreshItems); }
-    else { savedDraws = new Set(); refreshItems(); }
-  }
-
-  function renderAuth() {
-    const bar = $('#authBar'); bar.replaceChildren();
-    if (user) {
-      bar.append(el('span', { class: 'muted' }, user.email), el('button', { onclick: () => sb.auth.signOut() }, 'ออกจากระบบ'));
-      return;
-    }
-    const email = el('input', { type: 'email', placeholder: 'อีเมล', autocomplete: 'email' });
-    const pass = el('input', { type: 'password', placeholder: 'รหัสผ่าน (6 ตัวขึ้นไป)', autocomplete: 'current-password' });
-    const msg = el('span', { class: 'muted' });
-    const run = async (kind) => {
-      if (!sb) return;
-      msg.textContent = '...';
-      const fn = kind === 'in' ? sb.auth.signInWithPassword({ email: email.value.trim(), password: pass.value })
-        : sb.auth.signUp({ email: email.value.trim(), password: pass.value });
-      const { data, error } = await fn;
-      if (error) msg.textContent = error.message;
-      else if (kind === 'up' && !data.session) msg.textContent = 'สมัครแล้ว — ยืนยันอีเมลก่อนแล้วค่อยเข้าสู่ระบบ';
-      else msg.textContent = '';
-    };
-    bar.append(email, pass, el('button', { class: 'primary', onclick: () => run('in') }, 'เข้าสู่ระบบ'), el('button', { onclick: () => run('up') }, 'สมัคร'), msg);
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    loadSavedSet().then(refreshItems);
   }
 
   async function loadSavedSet() {
     savedDraws = new Set();
-    if (!sb || !user) return;
+    if (!sb) return;
     let from = 0;
     for (;;) {
       const { data, error } = await sb.from('draws').select('draw_no').range(from, from + 999);
@@ -100,9 +70,9 @@
     return r;
   }
 
-  function normalizeCanvas(source, w, h) {
+  function normalizeCanvas(source, w, h) { // ใช้ขนาดเดิมของภาพ ไม่ย่อ
     const cv = document.createElement('canvas');
-    const s = w > 1280 ? 1280 / w : 1;
+    const s = 1;
     cv.width = Math.round(w * s); cv.height = Math.round(h * s);
     cv.getContext('2d').drawImage(source, 0, 0, cv.width, cv.height);
     return cv;
@@ -233,7 +203,7 @@
 
   async function saveItem(it, interactive) {
     const note = $('#is-' + it.id);
-    if (!sb || !user) { if (interactive) alert('ต้องเข้าสู่ระบบก่อนบันทึก'); return false; }
+    if (!sb) { if (interactive) alert('เชื่อมต่อ Supabase ไม่ได้'); return false; }
     const ev = evalItem(it);
     if (!ev.drawOk) { if (interactive) alert('เลขงวดไม่ถูกต้อง'); return false; }
     if (!ev.v.structureOk) { if (interactive) alert('จำนวนเลขหรือจำนวนหลักไม่ครบ กรุณาแก้ก่อน'); return false; }
@@ -249,7 +219,7 @@
   }
 
   async function saveAll() {
-    if (!user) return alert('ต้องเข้าสู่ระบบก่อนบันทึก');
+    if (!sb) return alert('เชื่อมต่อ Supabase ไม่ได้');
     let n = 0, skipped = 0;
     for (const it of items.filter((x) => !x.saved)) {
       if (evalItem(it).ok) { if (await saveItem(it, false)) n++; } else skipped++;
@@ -329,27 +299,21 @@
 
   async function loadDraws() {
     const t = $('#drawTable');
-    if (!user) { t.replaceChildren(el('tr', {}, el('td', {}, 'เข้าสู่ระบบเพื่อดูข้อมูล'))); return; }
+    if (!sb) { t.replaceChildren(el('tr', {}, el('td', {}, 'เชื่อมต่อ Supabase ไม่ได้'))); return; }
     try {
       const rows = await fetchAll('draws', 'id,draw_no,game,source,created_at,results(count)', 'draw_no');
       $('#drawCount').textContent = `(${rows.length} งวด)`;
-      const head = el('tr', {}, el('th', {}, 'งวด'), el('th', {}, 'เกม'), el('th', {}, 'แหล่ง'), el('th', { class: 'num' }, 'จำนวนเลข'), el('th', {}, 'บันทึกเมื่อ'), el('th', {}));
+      const head = el('tr', {}, el('th', {}, 'งวด'), el('th', {}, 'เกม'), el('th', {}, 'แหล่ง'), el('th', { class: 'num' }, 'จำนวนเลข'), el('th', {}, 'บันทึกเมื่อ'));
       const body = rows.map((d) => el('tr', {},
         el('td', {}, d.draw_no), el('td', {}, d.game), el('td', {}, d.source),
         el('td', { class: 'num' }, d.results && d.results[0] ? d.results[0].count : 0),
-        el('td', {}, new Date(d.created_at).toLocaleString('th-TH')),
-        el('td', {}, el('button', { class: 'danger', onclick: async () => {
-          if (!confirm('ลบงวด ' + d.draw_no + ' ?')) return;
-          const { error } = await sb.from('draws').delete().eq('id', d.id);
-          if (error) return alert(error.message);
-          savedDraws.delete(d.draw_no); loadDraws();
-        } }, 'ลบ'))));
+        el('td', {}, new Date(d.created_at).toLocaleString('th-TH'))));
       t.replaceChildren(head, ...body);
     } catch (e) { t.replaceChildren(el('tr', {}, el('td', {}, 'โหลดไม่สำเร็จ: ' + e.message))); }
   }
 
   async function exportCsv() {
-    if (!user) return alert('ต้องเข้าสู่ระบบ');
+    if (!sb) return alert('เชื่อมต่อ Supabase ไม่ได้');
     const rows = await fetchAll('v_last2', 'draw_no,tier,position,number,last2', 'draw_no');
     const csv = 'draw_no,tier,position,number,last2\n' + rows.map((r) => [r.draw_no, r.tier, r.position, r.number, r.last2].join(',')).join('\n');
     const a = el('a', { href: URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })), download: 'hanoi-results.csv' });
@@ -360,7 +324,7 @@
   let anaRows = null;
   async function loadAna(force) {
     const out = $('#anaOut');
-    if (!user) { out.replaceChildren(el('div', { class: 'card' }, 'เข้าสู่ระบบเพื่อดูการวิเคราะห์')); return; }
+    if (!sb) { out.replaceChildren(el('div', { class: 'card' }, 'เชื่อมต่อ Supabase ไม่ได้')); return; }
     if (!anaRows || force) {
       out.replaceChildren(el('div', { class: 'card' }, 'กำลังโหลด...'));
       try { anaRows = await fetchAll('v_last2', 'draw_no,tier,position,number', 'draw_no'); }
@@ -480,5 +444,5 @@
   }
 
   if (!TPL.length) { const w = $('#cfgWarn'); w.hidden = false; w.textContent = 'ไม่พบ templates.js — อ่านภาพอัตโนมัติไม่ได้'; }
-  wire(); renderAuth(); initSb(); showTab('img');
+  wire(); initSb(); showTab('img');
 })();

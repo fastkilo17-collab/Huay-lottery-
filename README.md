@@ -17,8 +17,9 @@
 Settings → Pages → Deploy from a branch → `main` / root
 
 ## ตั้งค่า Supabase
+รันไฟล์ `supabase-open-access.sql` ใน SQL Editor ก่อนใช้งาน (เปิดให้อ่าน/เพิ่มโดยไม่ต้องล็อกอิน ลบไม่ได้)
+
 ค่า URL และ publishable key อยู่ต้น `app.js` (ปลอดภัยให้อยู่ฝั่งเว็บ เพราะข้อมูลป้องกันด้วย RLS)
-ถ้าไม่อยากยืนยันอีเมลตอนสมัคร: Supabase → Authentication → Providers → Email → ปิด "Confirm email"
 
 ## หมายเหตุ
 ผลแต่ละงวดเป็นอิสระต่อกัน สถิติย้อนหลังทำนายงวดถัดไปไม่ได้
