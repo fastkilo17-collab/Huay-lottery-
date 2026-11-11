@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>สถิติผลฮานอย</title>
+<style>
+  :root {
+    --bg: #f4f6f4; --card: #ffffff; --ink: #1b2a22; --muted: #5d6f65; --line: #d9e0db;
+    --accent: #1f6b45; --accent-ink: #ffffff; --ok: #1a7f4b; --warn: #b26a00; --bad: #b3261e;
+    --ok-bg: #e3f4ea; --warn-bg: #fff1d6; --bad-bg: #fde6e4; --chip: #eaf0ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101713; --card: #18221c; --ink: #e6efe9; --muted: #94a79c; --line: #2b3a31;
+      --accent: #4fbf86; --accent-ink: #08170f; --ok: #5fd39b; --warn: #f0b24a; --bad: #ff8a80;
+      --ok-bg: #153325; --warn-bg: #3a2c10; --bad-bg: #3d1a17; --chip: #202d25;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Sarabun","Noto Sans Thai",system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 17px; margin: 0 0 8px; }
+  h3 { font-size: 15px; margin: 14px 0 6px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, select, button { font: inherit; color: inherit; }
+  input[type=text], input[type=email], input[type=password], input[type=number], select {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0;
+  }
+  button { background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.danger { color: var(--bad); }
+  nav.tabs { display: flex; gap: 4px; overflow-x: auto; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+  nav.tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; padding: 10px 14px; white-space: nowrap; color: var(--muted); }
+  nav.tabs button[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+  section.tab[hidden] { display: none; }
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 22px; text-align: center; color: var(--muted); }
+  .drop.over { border-color: var(--accent); background: var(--chip); }
+  .chip { display: inline-block; font-size: 12px; border-radius: 99px; padding: 2px 10px; background: var(--chip); }
+  .chip.ok { background: var(--ok-bg); color: var(--ok); }
+  .chip.warn { background: var(--warn-bg); color: var(--warn); }
+  .chip.bad { background: var(--bad-bg); color: var(--bad); }
+  .item { display: grid; grid-template-columns: 110px 1fr; gap: 12px; }
+  .item img { width: 110px; border-radius: 8px; border: 1px solid var(--line); background: #000; }
+  .tiers { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; margin-top: 8px; }
+  .tier { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .tier label { width: 100%; font-size: 12px; color: var(--muted); }
+  .tier input { width: 66px; padding: 4px 6px; font-variant-numeric: tabular-nums; text-align: center; }
+  .tier input.low { border-color: var(--warn); background: var(--warn-bg); }
+  .tier input.err { border-color: var(--bad); background: var(--bad-bg); }
+  .drawno { width: 150px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  table.t { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.t th, table.t td { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+  table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mis { color: var(--bad); font-weight: 600; }
+  .issues { margin: 6px 0 0; padding-left: 18px; color: var(--bad); font-size: 13px; }
+  progress { width: 100%; height: 10px; }
+  .log { max-height: 160px; overflow: auto; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; }
+  .heat { display: grid; grid-template-columns: 34px repeat(10, 1fr); gap: 2px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .heat div { text-align: center; padding: 5px 0; border-radius: 4px; }
+  .heat .h { color: var(--muted); }
+  .heat .c { background: color-mix(in srgb, var(--accent) calc(var(--a, 0) * 100%), var(--chip)); }
+  .heat .c b { display: block; font-size: 12.5px; }
+  .heat .c small { opacity: .75; }
+  .bars { display: grid; gap: 3px; }
+  .bar { display: grid; grid-template-columns: 34px 1fr 54px; gap: 8px; align-items: center; font-size: 13px; }
+  .bar i { display: block; height: 10px; border-radius: 5px; background: var(--accent); }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .stat { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+  .stat div { background: var(--chip); border-radius: 10px; padding: 8px 12px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .notice { background: var(--warn-bg); color: var(--ink); border-left: 4px solid var(--warn); border-radius: 6px; padding: 8px 12px; font-size: 13.5px; }
+  .scroll { overflow-x: auto; }
+  @media (max-width: 560px) { .item { grid-template-columns: 1fr; } .item img { width: 100%; max-width: 220px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>สถิติผลฮานอย</h1>
+  </header>
+
+  <div id="cfgWarn" class="notice" hidden></div>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="img" aria-selected="true">อ่านจากรูป</button>
+    <button role="tab" data-tab="vid" aria-selected="false">อ่านจากวิดีโอ</button>
+    <button role="tab" data-tab="draws" aria-selected="false">งวดที่บันทึก</button>
+    <button role="tab" data-tab="ana" aria-selected="false">วิเคราะห์</button>
+    <button role="tab" data-tab="bw" aria-selected="false">ย้อนหลังจากเว็บ</button>
+  </nav>
+
+  <!-- ตั้งค่าที่ใช้ร่วมกัน -->
+  <div class="card" id="settings">
+    <div class="row">
+      <label>เกม <input type="text" id="game" value="ฮานอย 27" size="12"></label>
+      <label>ออกทุก (วินาที) <input type="number" id="interval" value="90" min="1" style="width:80px"></label>
+      <label title="ใช้เมื่อวิดีโอ/ภาพมีแถบด้านบนต่างจากภาพตัวอย่าง (ค่าบวก = เลื่อนตำแหน่งอ่านลง)">เลื่อนแนวตั้ง <input type="number" id="offY" value="0" step="2" style="width:80px"></label>
+    </div>
+  </div>
+
+  <section class="tab" id="tab-img">
+    <div class="card">
+      <div class="drop" id="drop">
+        ลากรูปมาวาง · วางจากคลิปบอร์ด (Ctrl+V) · หรือ
+        <label style="text-decoration:underline;cursor:pointer">เลือกไฟล์<input type="file" id="fileImg" accept="image/*" multiple hidden></label>
+        <div class="muted">ใช้ภาพแคปหน้าจอผลหวยเต็มความกว้าง (เห็นตารางสิบ/หน่วยด้วย) เลือกได้หลายรูป</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-vid" hidden>
+    <div class="card">
+      <h2>อัดหน้าจอแล้วอ่านทีละงวด</h2>
+      <p class="muted" style="margin-top:0">เลือกวิดีโออัดหน้าจอที่เปิดหน้าผลรางวัลค้างไว้ ระบบจะเดินเฟรมตามช่วงเวลา อ่านเลขงวด และเก็บเฟรมที่อ่านครบและผ่านการตรวจของแต่ละงวด ทำงานในเบราว์เซอร์ทั้งหมด วิดีโอไม่ถูกอัปโหลด</p>
+      <div class="row">
+        <input type="file" id="fileVid" accept="video/*">
+        <label>ทุก <input type="number" id="vStep" value="5" min="1" max="60" style="width:70px"> วินาที</label>
+        <label><input type="checkbox" id="vSkip" checked> ข้ามงวดที่บันทึกแล้ว</label>
+        <button class="primary" id="vStart">เริ่มอ่าน</button>
+        <button id="vStop" disabled>หยุด</button>
+      </div>
+      <div style="margin-top:10px"><progress id="vProg" value="0" max="1"></progress></div>
+      <div class="muted" id="vStat">ยังไม่เริ่ม</div>
+      <div class="log" id="vLog"></div>
+    </div>
+  </section>
+
+  <!-- รายการที่อ่านได้ (ใช้ร่วมกันทั้งรูป/วิดีโอ) -->
+  <section id="reads" class="tab" hidden>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">ผลที่อ่านได้ <span class="muted" id="readCount"></span></h2>
+        <div class="row">
+          <button class="primary" id="saveAll">บันทึกทั้งหมดที่ผ่านการตรวจ</button>
+          <button id="clearAll">ล้างรายการ</button>
+        </div>
+      </div>
+      <div class="muted">ช่องสีส้ม = ไม่มั่นใจ · ช่องสีแดง = เลขท้าย 2 ตัวไม่ตรงตารางสิบ/หน่วย แก้ในช่องได้ก่อนบันทึก</div>
+    </div>
+    <div id="itemList"></div>
+  </section>
+
+  <section class="tab" id="tab-draws" hidden>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">งวดที่บันทึกไว้ <span class="muted" id="drawCount"></span></h2>
+        <div class="row"><button id="reloadDraws">โหลดใหม่</button><button id="exportCsv">ส่งออก CSV</button></div>
+      </div>
+      <div class="scroll"><table class="t" id="drawTable"></table></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-ana" hidden>
+    <div class="card">
+      <div class="row">
+        <label>ขอบเขต
+          <select id="scope">
+            <option value="all">ทุกรางวัล (27 เลข/งวด)</option>
+            <option value="special">เฉพาะรางวัลพิเศษ</option>
+            <option value="p1">เฉพาะรางวัลที่ 1</option>
+            <option value="p2">เฉพาะรางวัลที่ 2</option>
+            <option value="p3">เฉพาะรางวัลที่ 3</option>
+          </select>
+        </label>
+        <button id="reloadAna">โหลดข้อมูลใหม่</button>
+      </div>
+      <div class="notice" style="margin-top:10px">ผลแต่ละงวดเป็นอิสระต่อกัน สถิติย้อนหลังใช้ดูภาพรวมเท่านั้น <b>ทำนายงวดถัดไปไม่ได้</b> เลขที่ "หายนาน" ไม่ได้มีโอกาสออกมากขึ้น</div>
+    </div>
+    <div id="anaOut"></div>
+  </section>
+
+  <section class="tab" id="tab-bw" hidden>
+    <div class="card">
+      <h2>ผลและสถิติย้อนหลังจากเว็บ (หวยแต่ละชนิด)</h2>
+      <p class="muted" style="margin-top:0">เปิดหน้า "ผลหวย… ย้อนหลัง" ของหวยที่ต้องการ แล้วบันทึกหน้า (Ctrl+S → "Webpage, HTML only" หรือ .mht) ทีละหน้าของตาราง เลือกไฟล์ได้หลายไฟล์พร้อมกัน ระบบเก็บผลรายงวด (ไม่ซ้ำวันที่) และคำนวณสถิติให้เอง</p>
+      <div class="row">
+        <label class="row" style="cursor:pointer"><span class="primary" style="background:var(--accent);color:var(--accent-ink);padding:7px 14px;border-radius:8px;font-weight:600">นำเข้าไฟล์</span><input type="file" id="fileBw" accept=".html,.htm,.mht,.mhtml,text/html,message/rfc822" multiple hidden></label>
+        <label>หวย <select id="bwSlug"></select></label>
+        <label>คอลัมน์ <select id="bwCol"></select></label>
+      </div>
+      <div class="log" id="bwLog" style="margin-top:8px"></div>
+      <div class="notice" style="margin-top:8px">สถิติเป็นการสรุปอดีต ทำนายผลงวดถัดไปไม่ได้</div>
+    </div>
+    <div id="bwOut"></div>
+  </section>
+
+  <p class="muted" style="text-align:center">ไม่ต้องล็อกอิน — ใครมีลิงก์หน้านี้ก็อ่านและเพิ่มข้อมูลได้ (ลบไม่ได้)</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="lotto-core.js"></script>
+<script src="templates.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -51,10 +51,10 @@
   /* ---------- อ่านภาพ ---------- */
   function grayFromCanvas(cv) {
     const ctx = cv.getContext('2d', { willReadFrequently: true });
-    const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    const rgba = ctx.getImageData(0, 0, cv.width, cv.height).data;
     const g = new Uint8Array(cv.width * cv.height);
-    for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
-    return g;
+    for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = (rgba[i] * 299 + rgba[i + 1] * 587 + rgba[i + 2] * 114) / 1000;
+    return { gray: g, rgba };
   }
 
   function thumbOf(cv) {
@@ -65,8 +65,8 @@
   }
 
   function analyzeCanvas(cv) {
-    const gray = grayFromCanvas(cv);
-    const r = C.readScreen(gray, cv.width, cv.height, TPL, { offY: +$('#offY').value || 0 });
+    const { gray, rgba } = grayFromCanvas(cv);
+    const r = C.readScreen(gray, cv.width, cv.height, TPL, { offY: +$('#offY').value || 0, rgba });
     return r;
   }
 
@@ -344,7 +344,11 @@
   function renderAna() {
     const out = $('#anaOut');
     if (!anaRows || !anaRows.length) { out.replaceChildren(el('div', { class: 'card' }, 'ยังไม่มีข้อมูล — อ่านรูปหรือวิดีโอแล้วบันทึกก่อน')); return; }
-    const A = C.analyze(anaRows, $('#scope').value);
+    out.replaceChildren(...analysisNodes(C.analyze(anaRows, $('#scope').value)));
+  }
+
+  /** การ์ดวิเคราะห์ชุดเดียวกัน ใช้ทั้งหน้าผลฮานอยและหน้าย้อนหลังจากเว็บ */
+  function analysisNodes(A) {
     const maxC = Math.max(1, ...A.counts);
     const nodes = [];
 
@@ -385,10 +389,10 @@
           el('tr', {}, el('td', {}, 'ต่ำ 0–4'), el('td', { class: 'num' }, `${A.parity.low} (${pct(A.parity.low, A.n)})`)),
           el('tr', {}, el('td', {}, 'สูง 5–9'), el('td', { class: 'num' }, `${A.parity.high} (${pct(A.parity.high, A.n)})`)))))));
 
-    if (A.n5) {
+    if (A.nPos && A.posLen >= 2) {
       const head = el('tr', {}, el('th', {}, 'หลักที่'), ...Array.from({ length: 10 }, (_, d) => el('th', { class: 'num' }, d)));
-      const rows = A.pos5.map((arr, i) => el('tr', {}, el('td', {}, i + 1), ...arr.map((c) => el('td', { class: 'num' }, c))));
-      nodes.push(el('div', { class: 'card' }, el('h2', {}, `เลข 5 หลัก: ความถี่ของเลขแต่ละหลัก (${A.n5} เลข)`), el('div', { class: 'scroll' }, el('table', { class: 't' }, head, ...rows))));
+      const rows = A.pos.map((arr, i) => el('tr', {}, el('td', {}, i + 1), ...arr.map((c) => el('td', { class: 'num' }, c))));
+      nodes.push(el('div', { class: 'card' }, el('h2', {}, `เลข ${A.posLen} หลัก: ความถี่ของเลขแต่ละหลัก (${A.nPos} เลข)`), el('div', { class: 'scroll' }, el('table', { class: 't' }, head, ...rows))));
     }
 
     if (A.chi) {
@@ -404,17 +408,167 @@
         el('p', {}, el('span', { class: 'chip ' + verdict[1] }, verdict[0])),
         el('div', { class: 'muted' }, 'ถ้า p สูง = ไม่มีหลักฐานว่าเลขไม่สุ่ม · ผลนี้บอกได้แค่ความสม่ำเสมอของอดีต ไม่ได้บอกเลขงวดถัดไป')));
     }
+    return nodes;
+  }
+
+
+  /* ---------- ย้อนหลังจากเว็บ (นำเข้าไฟล์ที่บันทึกจาก exphuay.com) ---------- */
+  function qpToBytes(str) {
+    str = str.replace(/=\r?\n/g, '');
+    const out = [];
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      if (ch === '=' && /^[0-9A-Fa-f]{2}$/.test(str.substr(i + 1, 2))) { out.push(parseInt(str.substr(i + 1, 2), 16)); i += 2; }
+      else out.push(str.charCodeAt(i) & 255);
+    }
+    return Uint8Array.from(out);
+  }
+
+  /** รับไฟล์ .html/.htm/.mht/.mhtml → ข้อความ HTML */
+  async function fileToHtml(file) {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let latin = '';
+    for (let i = 0; i < buf.length; i += 8192) latin += String.fromCharCode.apply(null, buf.subarray(i, i + 8192)); // 1 ไบต์ = 1 ตัวอักษร (TextDecoder('latin1') ในเบราว์เซอร์เป็น windows-1252 จึงใช้ไม่ได้)
+    if (!/^(From:|MIME-Version:|Subject:|Date:|Content-Type: multipart)/i.test(latin.slice(0, 400)) && !/MIME-Version:/i.test(latin.slice(0, 2000))) {
+      return new TextDecoder('utf-8').decode(buf);
+    }
+    const bm = latin.match(/boundary="?([^"\r\n;]+)"?/i);
+    if (!bm) throw new Error('อ่านโครงสร้างไฟล์ .mht ไม่ได้');
+    const parts = latin.split('--' + bm[1]);
+    for (const part of parts) {
+      const cut = part.search(/\r?\n\r?\n/);
+      if (cut < 0) continue;
+      const head = part.slice(0, cut), body = part.slice(cut).replace(/^\r?\n\r?\n/, '');
+      if (!/Content-Type:\s*text\/html/i.test(head)) continue;
+      const enc = (head.match(/Content-Transfer-Encoding:\s*(\S+)/i) || [])[1] || '7bit';
+      const cs = (head.match(/charset="?([\w-]+)"?/i) || [])[1] || 'utf-8';
+      let bytes;
+      if (/quoted-printable/i.test(enc)) bytes = qpToBytes(body);
+      else if (/base64/i.test(enc)) bytes = Uint8Array.from(atob(body.replace(/\s+/g, '')), (c) => c.charCodeAt(0));
+      else bytes = Uint8Array.from(body, (c) => c.charCodeAt(0) & 255);
+      return new TextDecoder(cs).decode(bytes);
+    }
+    throw new Error('ไม่พบหน้า HTML ในไฟล์ .mht');
+  }
+
+  /** แปลงหน้า "ผลย้อนหลัง" ของ exphuay.com → {slug, name, columns, rows:[{date, vals}]} */
+  function parseBackwardHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const rows = [], seen = new Set();
+    let slug = '', name = '', columns = [];
+    doc.querySelectorAll('a[href*="/result/"]').forEach((a) => {
+      const m = (a.getAttribute('href') || '').match(/\/result\/([^?\/#]+)\?date=(\d{4}-\d{2}-\d{2})/);
+      const li = a.closest('li');
+      if (!m || !li || seen.has(m[2])) return;
+      const spans = [...li.children].filter((x) => x.tagName === 'SPAN');
+      if (spans.length < 2) return;
+      if (!slug) {
+        slug = m[1].toLowerCase().replace(/[^a-z0-9_-]/g, '');
+        name = a.textContent.split('|')[0].trim() || slug;
+        const hdr = li.parentElement && li.parentElement.previousElementSibling;
+        if (hdr) columns = [...hdr.children].filter((x) => x.tagName === 'SPAN').slice(1).map((x) => x.textContent.trim());
+      }
+      const vals = {};
+      spans.slice(1).forEach((sp, i) => { const t = sp.textContent.trim(); if (t) vals[columns[i] || 'ช่อง ' + (i + 1)] = t; });
+      if (!Object.keys(vals).length) return;
+      seen.add(m[2]); rows.push({ date: m[2], vals });
+    });
+    if (!slug) throw new Error('ไม่พบตารางผลย้อนหลังในไฟล์นี้ (ต้องเป็นหน้า exphuay.com/backward/...)');
+    return { slug, name, columns, rows };
+  }
+
+  async function importBackwardFiles(files) {
+    const log = $('#bwLog');
+    if (!sb) { log.textContent = 'เชื่อมต่อ Supabase ไม่ได้'; return; }
+    log.textContent = '';
+    const bySlug = new Map();
+    for (const f of files) {
+      try {
+        const r = parseBackwardHtml(await fileToHtml(f));
+        const g = bySlug.get(r.slug) || { name: r.name, rows: new Map() };
+        r.rows.forEach((x) => g.rows.set(x.date, x));
+        bySlug.set(r.slug, g);
+        log.textContent += `${f.name}: ${r.name} ${r.rows.length} งวด (${r.rows[r.rows.length - 1].date} → ${r.rows[0].date})\n`;
+      } catch (e) { log.textContent += `${f.name}: ${e.message}\n`; }
+    }
+    for (const [slug, g] of bySlug) {
+      const arr = [...g.rows.values()];
+      for (let i = 0; i < arr.length; i += 500) {
+        const { error } = await sb.rpc('import_backward', { p_slug: slug, p_name: g.name, p_rows: arr.slice(i, i + 500) });
+        if (error) { log.textContent += `บันทึก ${g.name} ไม่สำเร็จ: ${error.message}\n`; return; }
+      }
+      log.textContent += `✓ บันทึก ${g.name} รวม ${arr.length} งวดแล้ว\n`;
+    }
+    await loadBackwardList(Array.from(bySlug.keys())[0]);
+  }
+
+  async function fetchBackwardRows(slug) {
+    const rows = []; let from = 0;
+    for (;;) {
+      const { data, error } = await sb.from('lotto_backward').select('draw_date,vals').eq('slug', slug).order('draw_date', { ascending: true }).range(from, from + 999);
+      if (error) throw error;
+      rows.push(...data);
+      if (data.length < 1000) break;
+      from += 1000;
+    }
+    return rows;
+  }
+
+  async function loadBackwardList(select) {
+    const sel = $('#bwSlug');
+    if (!sb) return;
+    const { data, error } = await sb.from('lotto_backward').select('slug,name').order('slug').limit(1000);
+    if (error) { $('#bwOut').replaceChildren(el('div', { class: 'card' }, 'โหลดไม่สำเร็จ: ' + error.message)); return; }
+    const uniq = new Map(); data.forEach((r) => uniq.set(r.slug, r.name));
+    const cur = select || sel.value;
+    sel.replaceChildren(...[...uniq].map(([slug, name]) => el('option', { value: slug }, name)));
+    if (cur && uniq.has(cur)) sel.value = cur;
+    if (!uniq.size) { $('#bwOut').replaceChildren(el('div', { class: 'card' }, 'ยังไม่มีข้อมูล — นำเข้าไฟล์ที่บันทึกจากหน้าผลย้อนหลังก่อน')); $('#bwCol').replaceChildren(); return; }
+    await renderBackward(true);
+  }
+
+  let bwCache = null;
+  async function renderBackward(reload) {
+    const out = $('#bwOut'), slug = $('#bwSlug').value;
+    if (!slug) return;
+    if (reload || !bwCache || bwCache.slug !== slug) {
+      out.replaceChildren(el('div', { class: 'card' }, 'กำลังโหลด...'));
+      try { bwCache = { slug, rows: await fetchBackwardRows(slug) }; }
+      catch (e) { out.replaceChildren(el('div', { class: 'card' }, 'โหลดไม่สำเร็จ: ' + e.message)); return; }
+      const cols = []; bwCache.rows.forEach((r) => Object.keys(r.vals).forEach((k) => { if (!cols.includes(k)) cols.push(k); }));
+      bwCache.cols = cols;
+      const colSel = $('#bwCol'), prev = colSel.value;
+      colSel.replaceChildren(...cols.map((c) => el('option', { value: c }, c)));
+      if (cols.includes(prev)) colSel.value = prev;
+    }
+    const { rows, cols } = bwCache, col = $('#bwCol').value;
+    const nodes = [];
+    nodes.push(el('div', { class: 'card' }, el('h2', {}, 'ภาพรวม'), el('div', { class: 'stat' },
+      el('div', {}, el('b', {}, rows.length), 'งวดที่เก็บไว้'),
+      el('div', {}, el('b', {}, rows.length ? rows[0].draw_date : '—'), 'เก่าสุด'),
+      el('div', {}, el('b', {}, rows.length ? rows[rows.length - 1].draw_date : '—'), 'ล่าสุด'))));
+    const latest = rows.slice(-60).reverse();
+    nodes.push(el('div', { class: 'card' }, el('h2', {}, 'ผลย้อนหลัง (ล่าสุด 60 งวด)'), el('div', { class: 'scroll', style: 'max-height:340px;overflow:auto' },
+      el('table', { class: 't' }, el('tr', {}, el('th', {}, 'วันที่'), ...cols.map((c) => el('th', { class: 'num' }, c))),
+        ...latest.map((r) => el('tr', {}, el('td', {}, r.draw_date), ...cols.map((c) => el('td', { class: 'num' }, r.vals[c] || '—'))))))));
+    const series = [];
+    rows.forEach((r) => { const v = r.vals[col]; if (v && /^\d{2,}$/.test(v)) series.push({ draw_no: r.draw_date, tier: col, position: 1, number: v }); });
+    if (series.length) {
+      nodes.push(el('h2', { style: 'margin:16px 0 8px' }, 'สถิติ: ' + col + ` (${series.length} งวด)`));
+      nodes.push(...analysisNodes(C.analyze(series, 'all')));
+    } else nodes.push(el('div', { class: 'card' }, 'คอลัมน์นี้ไม่ใช่ตัวเลข จึงไม่มีสถิติ'));
     out.replaceChildren(...nodes);
   }
 
   /* ---------- เชื่อม UI ---------- */
   function showTab(name) {
     document.querySelectorAll('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
-    ['img', 'vid', 'draws', 'ana'].forEach((n) => { $('#tab-' + n).hidden = n !== name; });
+    ['img', 'vid', 'draws', 'ana', 'bw'].forEach((n) => { $('#tab-' + n).hidden = n !== name; });
     $('#reads').hidden = !(name === 'img' || name === 'vid') || !items.length;
-    $('#settings').hidden = name === 'draws' || name === 'ana';
+    $('#settings').hidden = name === 'draws' || name === 'ana' || name === 'bw';
     if (name === 'draws') loadDraws();
     if (name === 'ana') loadAna(false);
+    if (name === 'bw' && !bwCache) loadBackwardList();
   }
 
   function wire() {
@@ -441,6 +595,9 @@
     $('#exportCsv').addEventListener('click', exportCsv);
     $('#reloadAna').addEventListener('click', () => loadAna(true));
     $('#scope').addEventListener('change', () => anaRows && renderAna());
+    $('#fileBw').addEventListener('change', (e) => { importBackwardFiles([...e.target.files]); e.target.value = ''; });
+    $('#bwSlug').addEventListener('change', () => renderBackward(true));
+    $('#bwCol').addEventListener('change', () => renderBackward(false));
   }
 
   if (!TPL.length) { const w = $('#cfgWarn'); w.hidden = false; w.textContent = 'ไม่พบ templates.js — อ่านภาพอัตโนมัติไม่ได้'; }

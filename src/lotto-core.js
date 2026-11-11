@@ -5,6 +5,7 @@
   // ตำแหน่งต่างๆ ในภาพแคปจอ (อ้างอิงภาพกว้าง 1280px) — สเกลตามความกว้างภาพ
   const LAYOUT = {
     refW: 1280,
+    refTensLeft: 744, refHeaderTop: 351, refPitch: 84.5, refTensW: 99,   // จุดอ้างอิงของตารางสีฟ้าในภาพตัวอย่าง
     refH: 1301,
     draw: [546, 270, 832, 328],            // เลขงวด 10 หลัก (หลังคำว่า "งวด") — ใช้ 10 หลักท้ายสุด
     prizeX: [207, 740],
@@ -298,10 +299,16 @@
    */
   function readScreen(gray, w, h, templates, opts) {
     opts = opts || {};
-    const L = LAYOUT, s = w / L.refW, offY = (opts.offY || 0) * s;
+    const L = LAYOUT;
+    // ปรับตำแหน่งอัตโนมัติจากตารางสีฟ้า (สิบ/หน่วย) ถ้ามีภาพสี — ใช้ได้แม้ภาพถูกครอปหรือซูม
+    const cal = opts.rgba ? calibrate(opts.rgba, w, h) : null;
+    const s = cal ? cal.s : w / L.refW;
+    const offY = (opts.offY || 0) * s;
+    const mapX = cal ? (x) => cal.tensLeft + s * (x - L.refTensLeft) : (x) => x * s;
+    const mapY = cal ? (y) => cal.headerTop + s * (y - L.refHeaderTop) + offY : (y) => y * s + offY;
     const segOpts = { margin: Math.max(2, Math.round(3 * s)), bandGap: Math.max(1, Math.round(3 * s)) };
     const region = (x0, y0, x1, y1, o) => {
-      const c = cropGray(gray, w, h, x0 * s, y0 * s + offY, x1 * s, y1 * s + offY);
+      const c = cropGray(gray, w, h, mapX(x0), mapY(y0), mapX(x1), mapY(y1));
       if (c.w < 8 || c.h < 8) return [];
       if (o.invert) for (let i = 0; i < c.data.length; i++) c.data[i] = 255 - c.data[i];
       const seg = findNumberBoxes(c.data, c.w, c.h, Object.assign({ mergeGap: 0, minContrast: opts.minContrast }, segOpts));
@@ -330,7 +337,55 @@
       const y0 = L.tableY0 + L.rowH * i, y1 = L.tableY0 + L.rowH * (i + 1);
       table.push(region(L.tableX[0], y0, L.tableX[1], y1, { gapFactor: 0.2 }).map((g) => g.text));
     }
-    return { drawNo, nums, table: table.map((r) => r.join('').split('').filter(Boolean)), conf };
+    return { drawNo, nums, table: table.map((r) => r.join('').split('').filter(Boolean)), conf, calibrated: !!cal, scale: s };
+  }
+
+  /**
+   * หาตำแหน่งตารางสิบ/หน่วย (พื้นสีฟ้า) จากภาพสี RGBA → {s, tensLeft, headerTop} หรือ null
+   * ตารางมี 11 แถว (หัวตาราง + 0..9) ระยะห่างแถวอ้างอิง 84.5px ที่ภาพตัวอย่าง
+   */
+  function calibrate(rgba, w, h) {
+    const blue = new Uint8Array(w * h);
+    for (let i = 0, p = 0; p < blue.length; p++, i += 4) blue[p] = rgba[i + 2] - rgba[i] > 40 && rgba[i + 2] > 150 ? 1 : 0;
+    const col = new Float64Array(w);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) col[x] += blue[y * w + x];
+    let mx = 0; for (let x = 0; x < w; x++) if (col[x] > mx) mx = col[x];
+    if (mx < h * 0.3) return null;
+    let x0 = -1, x1 = -1;
+    for (let x = 0; x < w; x++) {
+      if (col[x] > 0.5 * mx) { if (x0 < 0) x0 = x; x1 = x; } else if (x0 >= 0) break; // คอลัมน์ "สิบ" (แคบ) = กลุ่มแรก
+    }
+    if (x0 < 0) return null;
+    const tensW = x1 - x0 + 1;
+    // แถวบนสุดของพื้นสีฟ้า = ขอบบนของหัวตาราง
+    const blueRow = new Float64Array(h), whiteRow = new Float64Array(h);
+    for (let y = 0; y < h; y++) {
+      let c = 0, wh = 0;
+      for (let x = x0; x <= x1; x++) {
+        c += blue[y * w + x];
+        const i = (y * w + x) * 4;
+        if (Math.min(rgba[i], rgba[i + 1], rgba[i + 2]) > 215) wh++;
+      }
+      blueRow[y] = c / tensW; whiteRow[y] = wh / tensW;
+    }
+    let headerTop = -1;
+    for (let y = 0; y < h; y++) if (blueRow[y] > 0.5) { headerTop = y; break; }
+    if (headerTop < 0) return null;
+    // เส้นคั่นแถว = แถวพิกเซลที่ขาวเกือบทั้งคอลัมน์ (ทนต่อภาพที่ถูกย่อ/บีบอัด)
+    const centers = []; let st = -1;
+    for (let y = headerTop + 1; y <= h; y++) {
+      const on = y < h && whiteRow[y] > 0.3;
+      if (on && st < 0) st = y;
+      else if (!on && st >= 0) { centers.push((st + y - 1) / 2); st = -1; }
+    }
+    if (centers.length < 4) return null;
+    const diffs = centers.slice(1).map((c, i) => c - centers[i]).sort((m, n) => m - n);
+    const med = diffs[Math.floor(diffs.length / 2)];
+    const steps = Math.round((centers[centers.length - 1] - centers[0]) / med);
+    const pitch = steps > 0 ? (centers[centers.length - 1] - centers[0]) / steps : med;
+    const s = pitch / LAYOUT.refPitch;
+    if (s < 0.3 || s > 6 || Math.abs(tensW / s - LAYOUT.refTensW) > 12) return null;
+    return { s, tensLeft: x0, headerTop, pitch };
   }
 
   /** แปลง nums -> แถวสำหรับบันทึก {tier, position, number} */
@@ -399,10 +454,11 @@
       (u < 5 ? parity.low++ : parity.high++);
     }
 
-    // ความถี่เลขแต่ละหลักของเลข 5 หลัก
-    const pos5 = Array.from({ length: 5 }, () => Array(10).fill(0));
-    let n5 = 0;
-    for (const r of sel) if (r.number.length === 5) { n5++; for (let i = 0; i < 5; i++) pos5[i][+r.number[i]]++; }
+    // ความถี่เลขแต่ละหลัก (เลือกความยาวที่ยาวที่สุดในขอบเขตนั้น)
+    const posLen = sel.reduce((m, r) => Math.max(m, r.number.length), 0);
+    const pos = Array.from({ length: posLen }, () => Array(10).fill(0));
+    let nPos = 0;
+    for (const r of sel) if (r.number.length === posLen) { nPos++; for (let i = 0; i < posLen; i++) pos[i][+r.number[i]]++; }
 
     // chi-square ความสม่ำเสมอของเลขท้าย 2 ตัว
     let chi = null;
@@ -425,10 +481,10 @@
     for (const r of sel) { if (!byDraw.has(r.draw_no)) byDraw.set(r.draw_no, []); byDraw.get(r.draw_no).push(r.number.slice(-2)); }
     for (const a of byDraw.values()) if (new Set(a).size < a.length) drawsWithDup++;
 
-    return { draws: draws.length, n, counts, gap, tens, units, parity, pos5, n5, chi, top, bottom, longestGap, drawsWithDup };
+    return { draws: draws.length, n, counts, gap, tens, units, parity, pos, posLen, nPos, chi, top, bottom, longestGap, drawsWithDup };
   }
 
-  const api = { LAYOUT, TIER_NAMES, TOTAL_NUMBERS, parsePrizeText, parseUnitsText, parseDrawNo, isValidDrawNo, validate, flattenResults, analyze, chiSquareP, otsu, findNumberBoxes, groupDigits, digitFeature, classifyDigit, readRegion, featDist, GW, GH, cropGray, readScreen };
+  const api = { LAYOUT, TIER_NAMES, TOTAL_NUMBERS, parsePrizeText, parseUnitsText, parseDrawNo, isValidDrawNo, validate, flattenResults, analyze, chiSquareP, otsu, findNumberBoxes, groupDigits, digitFeature, classifyDigit, readRegion, featDist, GW, GH, cropGray, readScreen, calibrate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.LottoCore = api;
 })(typeof self !== 'undefined' ? self : this);
