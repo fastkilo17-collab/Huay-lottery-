@@ -28,3 +28,10 @@ begin
 end $$;
 revoke all on function public.import_backward(text,text,jsonb) from public;
 grant execute on function public.import_backward(text,text,jsonb) to anon, authenticated;
+
+-- มุมมองรายชื่อหวย/คอลัมน์ที่เก็บไว้ (ใช้เลือกหวยในหน้าวิเคราะห์) — รันแล้วใน HanoiLotteryStats
+create or replace view public.v_backward_sources with (security_invoker = true) as
+select b.slug, max(b.name) as name, count(*)::int as n, min(b.draw_date) as d_min, max(b.draw_date) as d_max,
+       (select array_agg(distinct k order by k) from public.lotto_backward b2, jsonb_object_keys(b2.vals) k where b2.slug = b.slug) as cols
+from public.lotto_backward b group by b.slug;
+grant select on public.v_backward_sources to anon, authenticated;

@@ -77,6 +77,8 @@
   .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
   .notice { background: var(--warn-bg); color: var(--ink); border-left: 4px solid var(--warn); border-radius: 6px; padding: 8px 12px; font-size: 13.5px; }
   .scroll { overflow-x: auto; }
+  .srcs { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px 12px; }
+  .srcs label { font-size: 14px; }
   @media (max-width: 560px) { .item { grid-template-columns: 1fr; } .item img { width: 100%; max-width: 220px; } }
 </style>
 </head>
@@ -112,6 +114,7 @@
         <label style="text-decoration:underline;cursor:pointer">เลือกไฟล์<input type="file" id="fileImg" accept="image/*" multiple hidden></label>
         <div class="muted">ใช้ภาพแคปหน้าจอผลหวยเต็มความกว้าง (เห็นตารางสิบ/หน่วยด้วย) เลือกได้หลายรูป</div>
       </div>
+      <div class="row" style="margin-top:10px"><button id="addManual">✍ บันทึกเลขเอง (ฮานอย 27)</button><span class="muted">พิมพ์เลขทั้ง 27 ตัวของงวดเอง</span></div>
     </div>
   </section>
 
@@ -160,7 +163,7 @@
   <section class="tab" id="tab-ana" hidden>
     <div class="card">
       <div class="row">
-        <label>ขอบเขต
+        <label>ขอบเขตของฮานอย 27
           <select id="scope">
             <option value="all">ทุกรางวัล (27 เลข/งวด)</option>
             <option value="special">เฉพาะรางวัลพิเศษ</option>
@@ -171,6 +174,9 @@
         </label>
         <button id="reloadAna">โหลดข้อมูลใหม่</button>
       </div>
+      <h3>เลือกหวยที่จะวิเคราะห์ (เลือกหลายรายการเพื่อรวมกันได้)</h3>
+      <div class="row" style="margin-bottom:6px"><button id="srcAll">เลือกทั้งหมด</button><button id="srcNone">ล้างการเลือก</button></div>
+      <div id="srcList" class="srcs"></div>
       <div class="notice" style="margin-top:10px">ผลแต่ละงวดเป็นอิสระต่อกัน สถิติย้อนหลังใช้ดูภาพรวมเท่านั้น <b>ทำนายงวดถัดไปไม่ได้</b> เลขที่ "หายนาน" ไม่ได้มีโอกาสออกมากขึ้น</div>
     </div>
     <div id="anaOut"></div>
@@ -187,6 +193,19 @@
       </div>
       <div class="log" id="bwLog" style="margin-top:8px"></div>
       <div class="notice" style="margin-top:8px">สถิติเป็นการสรุปอดีต ทำนายผลงวดถัดไปไม่ได้</div>
+    </div>
+    <div class="card">
+      <h2>✍ บันทึกเลขเอง (ผลย้อนหลัง)</h2>
+      <div class="row">
+        <label>หวย <select id="mSlug"></select></label>
+        <label>วันที่ <input type="date" id="mDate"></label>
+      </div>
+      <div class="row" id="mNew" style="margin-top:8px" hidden>
+        <label>ชื่อหวยใหม่ <input type="text" id="mName" placeholder="เช่น ฮานอยพิเศษ" size="16"></label>
+        <label>ชื่อคอลัมน์ (คั่นด้วยคอมมา) <input type="text" id="mCols" value="3 ตัวบน,2 ตัวล่าง" size="22"></label>
+      </div>
+      <div class="row" id="mVals" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:8px"><button class="primary" id="mSave">บันทึก</button><span class="muted" id="mMsg"></span></div>
     </div>
     <div id="bwOut"></div>
   </section>

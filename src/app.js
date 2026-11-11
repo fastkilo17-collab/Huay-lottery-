@@ -85,6 +85,16 @@
     addItem({ name: file.name || 'รูปจากคลิปบอร์ด', source: 'image', thumb: thumbOf(cv), width: cv.width, ...r });
   }
 
+  function nextDrawNo() {
+    const nums = [...savedDraws, ...items.map((x) => x.drawNo)].filter((d) => /^\d{10}$/.test(d)).map(Number);
+    return nums.length ? String(Math.max(...nums) + 1) : '';
+  }
+
+  function addManualItem() {
+    const it = addItem({ name: 'พิมพ์เอง', source: 'manual', drawNo: nextDrawNo() });
+    const first = $('#item-' + it.id + ' .tier input'); if (first) first.focus();
+  }
+
   async function handleFiles(files) {
     const list = [...files].filter((f) => f.type.startsWith('image/'));
     for (const f of list) {
@@ -110,14 +120,16 @@
   function evalItem(it) {
     const v = C.validate(it.nums, it.table);
     const drawOk = C.isValidDrawNo(it.drawNo);
-    return { v, drawOk, ok: v.ok && drawOk };
+    // งวดที่พิมพ์เอง ไม่มีตารางสิบ/หน่วยให้เทียบ: ผ่านเมื่อจำนวนเลขและจำนวนหลักครบ
+    const ok = it.source === 'manual' ? v.structureOk && drawOk : v.ok && drawOk;
+    return { v, drawOk, ok };
   }
 
   function chipFor(it, ev) {
     if (it.saved) return ['บันทึกแล้ว ✓', 'ok'];
     if (it.error) return ['อ่านไม่ได้', 'bad'];
     if (!ev.drawOk) return ['เลขงวดไม่ถูกต้อง', 'bad'];
-    if (ev.ok) return ['ผ่านการตรวจ ✓', 'ok'];
+    if (ev.ok) return [it.source === 'manual' ? 'พร้อมบันทึก ✓' : 'ผ่านการตรวจ ✓', 'ok'];
     if (!ev.v.verified && ev.v.structureOk && !ev.v.badRows.length) return ['อ่านตารางไม่ได้ — ตรวจเอง', 'warn'];
     return ['ต้องตรวจแก้', 'bad'];
   }
@@ -152,7 +164,7 @@
       tiers.append(wrap);
     }
 
-    const details = el('details', {}, el('summary', { class: 'muted' }, 'เทียบตารางสิบ/หน่วย'), el('div', { id: 'tbl-' + it.id }));
+    const details = it.source === 'manual' ? el('span') : el('details', {}, el('summary', { class: 'muted' }, 'เทียบตารางสิบ/หน่วย'), el('div', { id: 'tbl-' + it.id }));
     const actions = el('div', { class: 'row', style: 'margin-top:8px' },
       el('button', { class: 'primary', onclick: () => saveItem(it, true) }, 'บันทึก'),
       el('button', { class: 'danger', onclick: () => { items = items.filter((x) => x !== it); box.remove(); updateCount(); } }, 'ลบออก'),
@@ -160,7 +172,7 @@
 
     const body = el('div', {},
       el('div', { class: 'row' }, el('span', { class: 'muted' }, 'งวด'), drawInput, status, dup,
-        el('span', { class: 'muted' }, `${it.source === 'video' ? '🎞' : '🖼'} ${it.name}${it.note ? ' · ' + it.note : ''}`)),
+        el('span', { class: 'muted' }, `${it.source === 'video' ? '🎞' : it.source === 'manual' ? '✍' : '🖼'} ${it.name}${it.note ? ' · ' + it.note : ''}`)),
       it.error ? el('div', { class: 'issues' }, it.error) : tiers, details, el('ul', { class: 'issues', id: 'iss-' + it.id }), actions);
     box.append(el('div', { class: 'item' }, it.thumb ? el('img', { src: it.thumb, alt: 'ตัวอย่างภาพ' }) : el('div'), body));
     refreshStatus(it);
@@ -207,7 +219,7 @@
     const ev = evalItem(it);
     if (!ev.drawOk) { if (interactive) alert('เลขงวดไม่ถูกต้อง'); return false; }
     if (!ev.v.structureOk) { if (interactive) alert('จำนวนเลขหรือจำนวนหลักไม่ครบ กรุณาแก้ก่อน'); return false; }
-    if (interactive && !ev.v.verified && !confirm('ยังไม่ผ่านการตรวจกับตารางสิบ/หน่วย ต้องการบันทึกเลยหรือไม่?')) return false;
+    if (interactive && it.source !== 'manual' && !ev.v.verified && !confirm('ยังไม่ผ่านการตรวจกับตารางสิบ/หน่วย ต้องการบันทึกเลยหรือไม่?')) return false;
     const { error } = await sb.rpc('save_draw', {
       p_draw_no: it.drawNo, p_game: $('#game').value.trim() || 'ฮานอย 27',
       p_interval_sec: +$('#interval').value || 90, p_source: it.source, p_results: C.flattenResults(it.nums),
@@ -320,17 +332,74 @@
     document.body.append(a); a.click(); a.remove();
   }
 
-  /* ---------- วิเคราะห์ ---------- */
-  let anaRows = null;
+  /* ---------- วิเคราะห์ (เลือกหวยหลายแหล่งรวมกันได้) ---------- */
+  let anaRows = null, anaSources = [], anaSel = new Set(), anaInit = false;
+  const bwRowsCache = new Map();
+
   async function loadAna(force) {
     const out = $('#anaOut');
     if (!sb) { out.replaceChildren(el('div', { class: 'card' }, 'เชื่อมต่อ Supabase ไม่ได้')); return; }
     if (!anaRows || force) {
       out.replaceChildren(el('div', { class: 'card' }, 'กำลังโหลด...'));
-      try { anaRows = await fetchAll('v_last2', 'draw_no,tier,position,number', 'draw_no'); }
-      catch (e) { out.replaceChildren(el('div', { class: 'card' }, 'โหลดไม่สำเร็จ: ' + e.message)); return; }
+      try {
+        anaRows = await fetchAll('v_last2', 'draw_no,tier,position,number', 'draw_no');
+        const { data, error } = await sb.from('v_backward_sources').select('*').order('slug');
+        if (error) throw error;
+        anaSources = [];
+        const hd = new Set(anaRows.map((r) => r.draw_no)).size;
+        if (hd) anaSources.push({ id: 'hanoi', label: `ฮานอย 27 (ผลจากรูป/วิดีโอ) · ${hd} งวด` });
+        (data || []).forEach((src) => (src.cols || []).forEach((col) =>
+          anaSources.push({ id: `bw:${src.slug}:${col}`, slug: src.slug, col, label: `${src.name} · ${col} · ${src.n} งวด` })));
+        bwRowsCache.clear();
+      } catch (e) { out.replaceChildren(el('div', { class: 'card' }, 'โหลดไม่สำเร็จ: ' + e.message)); return; }
+      anaSel = new Set([...anaSel].filter((id) => anaSources.some((x) => x.id === id)));
+      if (!anaInit && anaSources.length) { anaSel.add(anaSources[0].id); anaInit = true; }
     }
+    renderSrcList();
     renderAna();
+  }
+
+  function renderSrcList() {
+    const box = $('#srcList');
+    box.replaceChildren(...anaSources.map((src) => el('label', { class: 'src' },
+      el('input', { type: 'checkbox', checked: anaSel.has(src.id), onchange: (e) => { e.target.checked ? anaSel.add(src.id) : anaSel.delete(src.id); renderAna(); } }), ' ' + src.label)));
+    if (!anaSources.length) box.textContent = 'ยังไม่มีข้อมูลให้เลือก';
+  }
+
+  async function rowsOfSource(src) {
+    if (src.id === 'hanoi') { const sc = $('#scope').value; return anaRows.filter((r) => sc === 'all' || r.tier === sc); }
+    if (!bwRowsCache.has(src.slug)) bwRowsCache.set(src.slug, await fetchBackwardRows(src.slug));
+    return bwRowsCache.get(src.slug)
+      .filter((r) => r.vals[src.col] && /^\d{2,}$/.test(r.vals[src.col]))
+      .map((r) => ({ draw_no: r.draw_date, tier: src.col, position: 1, number: r.vals[src.col] }));
+  }
+
+  async function renderAna() {
+    const out = $('#anaOut');
+    const picked = anaSources.filter((x) => anaSel.has(x.id));
+    if (!picked.length) { out.replaceChildren(el('div', { class: 'card' }, 'เลือกหวยด้านบนอย่างน้อย 1 รายการ')); return; }
+    const mySeq = (renderAna.seq = (renderAna.seq || 0) + 1);
+    out.replaceChildren(el('div', { class: 'card' }, 'กำลังคำนวณ...'));
+    let parts;
+    try { parts = await Promise.all(picked.map(async (src) => ({ src, rows: await rowsOfSource(src) }))); }
+    catch (e) { out.replaceChildren(el('div', { class: 'card' }, 'โหลดไม่สำเร็จ: ' + e.message)); return; }
+    if (mySeq !== renderAna.seq) return; // มีการเลือกใหม่แล้ว
+    parts = parts.filter((p) => p.rows.length);
+    if (!parts.length) { out.replaceChildren(el('div', { class: 'card' }, 'ไม่มีข้อมูลในรายการที่เลือก')); return; }
+    let A;
+    if (parts.length === 1) A = C.analyze(parts[0].rows, 'all');
+    else {
+      const merged = [];
+      parts.forEach((p, i) => p.rows.forEach((r) => merged.push({ ...r, draw_no: i + '|' + r.draw_no })));
+      A = C.analyze(merged, 'all');
+      const gaps = parts.map((p) => C.analyze(p.rows, 'all').gap);
+      A.gap = A.gap.map((_, k) => { let m = null; gaps.forEach((g) => { if (g[k] != null && (m == null || g[k] < m)) m = g[k]; }); return m; });
+      Object.assign(A, C.rank(A.counts, A.gap));
+    }
+    const head = el('div', { class: 'card' }, el('h2', {}, parts.length > 1 ? `รวม ${parts.length} แหล่ง` : parts[0].src.label),
+      parts.length > 1 ? el('div', { class: 'muted' }, parts.map((p) => p.src.label.replace(/ · \d+ งวด$/, '')).join(' + ')) : null,
+      parts.length > 1 ? el('div', { class: 'muted' }, 'รวมจำนวนครั้งของเลขท้าย 2 ตัวจากทุกแหล่ง · "ห่างมา" = จำนวนงวดที่น้อยที่สุดในบรรดาแหล่งที่เลือก (นับงวดแยกตามแต่ละหวย)') : null);
+    out.replaceChildren(head, ...analysisNodes(A));
   }
 
   const pct = (a, b) => (b ? (100 * a / b).toFixed(1) + '%' : '—');
@@ -339,12 +408,6 @@
     const max = Math.max(1, ...values);
     return el('div', { class: 'bars' }, values.map((v, i) => el('div', { class: 'bar' },
       el('span', {}, labelFn(i)), el('span', {}, el('i', { style: `width:${(100 * v / max).toFixed(1)}%` })), el('span', { class: 'muted' }, fmt ? fmt(v) : v))));
-  }
-
-  function renderAna() {
-    const out = $('#anaOut');
-    if (!anaRows || !anaRows.length) { out.replaceChildren(el('div', { class: 'card' }, 'ยังไม่มีข้อมูล — อ่านรูปหรือวิดีโอแล้วบันทึกก่อน')); return; }
-    out.replaceChildren(...analysisNodes(C.analyze(anaRows, $('#scope').value)));
   }
 
   /** การ์ดวิเคราะห์ชุดเดียวกัน ใช้ทั้งหน้าผลฮานอยและหน้าย้อนหลังจากเว็บ */
@@ -514,17 +577,66 @@
     return rows;
   }
 
+  const bwMeta = new Map();
   async function loadBackwardList(select) {
     const sel = $('#bwSlug');
     if (!sb) return;
-    const { data, error } = await sb.from('lotto_backward').select('slug,name').order('slug').limit(1000);
+    const { data, error } = await sb.from('v_backward_sources').select('*').order('slug');
     if (error) { $('#bwOut').replaceChildren(el('div', { class: 'card' }, 'โหลดไม่สำเร็จ: ' + error.message)); return; }
-    const uniq = new Map(); data.forEach((r) => uniq.set(r.slug, r.name));
+    bwMeta.clear(); (data || []).forEach((r) => bwMeta.set(r.slug, { name: r.name, cols: r.cols || [], n: r.n }));
     const cur = select || sel.value;
-    sel.replaceChildren(...[...uniq].map(([slug, name]) => el('option', { value: slug }, name)));
-    if (cur && uniq.has(cur)) sel.value = cur;
-    if (!uniq.size) { $('#bwOut').replaceChildren(el('div', { class: 'card' }, 'ยังไม่มีข้อมูล — นำเข้าไฟล์ที่บันทึกจากหน้าผลย้อนหลังก่อน')); $('#bwCol').replaceChildren(); return; }
+    sel.replaceChildren(...[...bwMeta].map(([slug, m]) => el('option', { value: slug }, `${m.name} (${m.n})`)));
+    if (cur && bwMeta.has(cur)) sel.value = cur;
+    renderManualBw();
+    if (!bwMeta.size) { $('#bwOut').replaceChildren(el('div', { class: 'card' }, 'ยังไม่มีข้อมูล — นำเข้าไฟล์ หรือพิมพ์เลขเองด้านบน')); $('#bwCol').replaceChildren(); return; }
     await renderBackward(true);
+  }
+
+  /* ----- พิมพ์เลขย้อนหลังเอง ----- */
+  const slugify = (name) => {
+    const ascii = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (ascii.length >= 3) return ascii.slice(0, 40);
+    let h = 5381; for (const ch of name) h = ((h * 33) ^ ch.codePointAt(0)) >>> 0;
+    return 'custom-' + h.toString(36);
+  };
+
+  function renderManualBw() {
+    const msel = $('#mSlug'), keep = msel.value;
+    msel.replaceChildren(...[...bwMeta].map(([slug, m]) => el('option', { value: slug }, m.name)), el('option', { value: '__new' }, '＋ หวยใหม่…'));
+    if (keep && (bwMeta.has(keep) || keep === '__new')) msel.value = keep;
+    else if (!bwMeta.size) msel.value = '__new';
+    const isNew = msel.value === '__new';
+    $('#mNew').hidden = !isNew;
+    const cols = isNew ? $('#mCols').value.split(',').map((x) => x.trim()).filter(Boolean) : (bwMeta.get(msel.value) || { cols: [] }).cols;
+    const box = $('#mVals');
+    const old = Object.fromEntries([...box.querySelectorAll('input')].map((i) => [i.dataset.col, i.value]));
+    box.replaceChildren(...cols.map((c) => el('label', {}, c + ' ', el('input', { type: 'text', inputmode: 'numeric', 'data-col': c, value: old[c] || '', style: 'width:90px;text-align:center' }))));
+    if (!$('#mDate').value) $('#mDate').value = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  }
+
+  async function saveManualBw() {
+    const msg = $('#mMsg');
+    if (!sb) { msg.textContent = 'เชื่อมต่อ Supabase ไม่ได้'; return; }
+    const isNew = $('#mSlug').value === '__new';
+    const name = isNew ? $('#mName').value.trim() : bwMeta.get($('#mSlug').value).name;
+    if (!name) { msg.textContent = 'ใส่ชื่อหวยก่อน'; return; }
+    const slug = isNew ? slugify(name) : $('#mSlug').value;
+    const date = $('#mDate').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { msg.textContent = 'เลือกวันที่ก่อน'; return; }
+    const vals = {};
+    for (const i of $('#mVals').querySelectorAll('input')) {
+      const v = i.value.trim();
+      if (!v) continue;
+      if (!/^\d+$/.test(v)) { msg.textContent = `"${i.dataset.col}" ต้องเป็นตัวเลข`; return; }
+      vals[i.dataset.col] = v;
+    }
+    if (!Object.keys(vals).length) { msg.textContent = 'ใส่เลขอย่างน้อย 1 ช่อง'; return; }
+    const { error } = await sb.rpc('import_backward', { p_slug: slug, p_name: name, p_rows: [{ date, vals }] });
+    if (error) { msg.textContent = 'บันทึกไม่สำเร็จ: ' + error.message; return; }
+    msg.textContent = `✓ บันทึก ${name} วันที่ ${date} แล้ว`;
+    $('#mVals').querySelectorAll('input').forEach((i) => { i.value = ''; });
+    bwCache = null; bwRowsCache.clear(); anaRows = anaRows; // ให้โหลดใหม่
+    await loadBackwardList(slug);
   }
 
   let bwCache = null;
@@ -595,8 +707,14 @@
     $('#exportCsv').addEventListener('click', exportCsv);
     $('#reloadAna').addEventListener('click', () => loadAna(true));
     $('#scope').addEventListener('change', () => anaRows && renderAna());
+    $('#srcAll').addEventListener('click', () => { anaSources.forEach((x) => anaSel.add(x.id)); renderSrcList(); renderAna(); });
+    $('#srcNone').addEventListener('click', () => { anaSel.clear(); renderSrcList(); renderAna(); });
     $('#fileBw').addEventListener('change', (e) => { importBackwardFiles([...e.target.files]); e.target.value = ''; });
     $('#bwSlug').addEventListener('change', () => renderBackward(true));
+    $('#mSlug').addEventListener('change', renderManualBw);
+    $('#mCols').addEventListener('input', renderManualBw);
+    $('#mSave').addEventListener('click', saveManualBw);
+    $('#addManual').addEventListener('click', addManualItem);
     $('#bwCol').addEventListener('change', () => renderBackward(false));
   }
 

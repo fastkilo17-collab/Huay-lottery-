@@ -428,6 +428,15 @@
    * วิเคราะห์ rows: [{draw_no, tier, position, number}]
    * scope: 'all' | tier code
    */
+  function rank(counts, gap) {
+    const order = counts.map((c, k) => ({ k, c, gap: gap[k] }));
+    return {
+      top: [...order].sort((a, b) => b.c - a.c || a.k - b.k).slice(0, 10),
+      bottom: [...order].sort((a, b) => a.c - b.c || a.k - b.k).slice(0, 10),
+      longestGap: [...order].sort((a, b) => (b.gap ?? 1e9) - (a.gap ?? 1e9) || a.k - b.k).slice(0, 10),
+    };
+  }
+
   function analyze(rows, scope) {
     const draws = [...new Set(rows.map((r) => r.draw_no))].sort();
     const drawIdx = new Map(draws.map((d, i) => [d, i]));
@@ -470,10 +479,7 @@
       chi.unitsStat = u; chi.unitsP = chiSquareP(u, 9);
     }
 
-    const order = counts.map((c, k) => ({ k, c, gap: gap[k] }));
-    const top = [...order].sort((a, b) => b.c - a.c || a.k - b.k).slice(0, 10);
-    const bottom = [...order].sort((a, b) => a.c - b.c || a.k - b.k).slice(0, 10);
-    const longestGap = [...order].sort((a, b) => (b.gap ?? 1e9) - (a.gap ?? 1e9) || a.k - b.k).slice(0, 10);
+    const { top, bottom, longestGap } = rank(counts, gap);
 
     // เลขซ้ำภายในงวดเดียว (เลขท้าย 2 ตัวซ้ำกัน)
     let drawsWithDup = 0;
@@ -484,7 +490,7 @@
     return { draws: draws.length, n, counts, gap, tens, units, parity, pos, posLen, nPos, chi, top, bottom, longestGap, drawsWithDup };
   }
 
-  const api = { LAYOUT, TIER_NAMES, TOTAL_NUMBERS, parsePrizeText, parseUnitsText, parseDrawNo, isValidDrawNo, validate, flattenResults, analyze, chiSquareP, otsu, findNumberBoxes, groupDigits, digitFeature, classifyDigit, readRegion, featDist, GW, GH, cropGray, readScreen, calibrate };
+  const api = { LAYOUT, TIER_NAMES, TOTAL_NUMBERS, parsePrizeText, parseUnitsText, parseDrawNo, isValidDrawNo, validate, flattenResults, analyze, chiSquareP, rank, otsu, findNumberBoxes, groupDigits, digitFeature, classifyDigit, readRegion, featDist, GW, GH, cropGray, readScreen, calibrate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.LottoCore = api;
 })(typeof self !== 'undefined' ? self : this);
